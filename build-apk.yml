@@ -1,0 +1,80 @@
+name: Build APK
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build-apk:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Unpack build kit
+        run: |
+          unzip -q apk-build-kit.zip -d work
+          du -sh work/*
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Build web assets
+        working-directory: work/chat-demo
+        run: |
+          pnpm install --no-frozen-lockfile
+          pnpm build
+          find dist -maxdepth 2 | sort
+
+      - name: Copy web assets into the Android app
+        run: |
+          rm -rf work/android/app/src/main/assets
+          mkdir -p work/android/app/src/main/assets
+          cp -R work/chat-demo/dist/. work/android/app/src/main/assets/
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Install Android SDK packages
+        run: |
+          yes | sdkmanager --licenses > /dev/null || true
+          sdkmanager --install "platforms;android-35" "build-tools;35.0.0" > /dev/null
+
+      - name: Install Gradle
+        run: |
+          curl -sSL --retry 3 -o /tmp/gradle.zip https://services.gradle.org/distributions/gradle-8.11.1-bin.zip
+          unzip -q /tmp/gradle.zip -d "$HOME"
+          echo "$HOME/gradle-8.11.1/bin" >> "$GITHUB_PATH"
+
+      - name: Assemble debug APK
+        working-directory: work/android
+        run: gradle assembleDebug --no-daemon --console=plain --stacktrace
+
+      - name: Collect APK
+        run: |
+          mkdir -p output
+          cp work/android/app/build/outputs/apk/debug/app-debug.apk output/chat-demo.apk
+          ls -lh output/chat-demo.apk
+
+      - name: Upload APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: chat-demo-apk
+          path: output/chat-demo.apk
+          if-no-files-found: error
